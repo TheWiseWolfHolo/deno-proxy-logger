@@ -1,0 +1,19 @@
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.*
+*.env
+env.local
+!env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Deno cache / local artifacts
+.deno/
+coverage/
+
+
