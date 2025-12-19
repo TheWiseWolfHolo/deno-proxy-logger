@@ -30,7 +30,55 @@ export function renderLoginPage(params: {
 </html>`;
 }
 
-export function renderLogsPage(params: { logs: LogEntry[]; nextBefore?: number }): string {
+export function renderKvNotConfiguredPage(params: {
+  kvError?: string;
+}): string {
+  const err = (params.kvError ?? "").trim();
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proxy Logger - KV Not Configured</title>
+    ${baseStyle()}
+  </head>
+  <body>
+    <main class="container">
+      <div class="row">
+        <h1>KV 未启用 / 未绑定</h1>
+        <div class="spacer"></div>
+        <a class="btn" href="/logout">退出</a>
+      </div>
+
+      <div class="card">
+        <p>
+          这个项目需要 <b>Deno KV</b> 来持久化保存对话日志。你已经成功部署了服务，但还没有给
+          项目创建/绑定 KV 数据库，所以日志功能暂时不可用。
+        </p>
+        <p class="muted">
+          请打开 <a href="https://dash.deno.com" target="_blank" rel="noreferrer">dash.deno.com</a> →
+          进入你的 Project →
+          Settings/Databases（或 KV）→ Create KV Database →
+          Bind to Project，完成后刷新本页。
+        </p>
+      </div>
+
+      ${
+    err
+      ? `<div class="card">
+        <div class="muted">KV 错误信息（仅用于排查）：</div>
+        <pre class="mono">${escapeHtml(err)}</pre>
+      </div>`
+      : ""
+  }
+    </main>
+  </body>
+</html>`;
+}
+
+export function renderLogsPage(
+  params: { logs: LogEntry[]; nextBefore?: number },
+): string {
   const { logs, nextBefore } = params;
   const rows = logs.map((l) => {
     const time = new Date(l.ts).toLocaleString();
@@ -47,7 +95,11 @@ export function renderLogsPage(params: { logs: LogEntry[]; nextBefore?: number }
     </tr>`;
   }).join("\n");
 
-  const nextLink = nextBefore ? `<a class="btn" href="/logs?before=${encodeURIComponent(String(nextBefore))}">下一页</a>` : "";
+  const nextLink = nextBefore
+    ? `<a class="btn" href="/logs?before=${
+      encodeURIComponent(String(nextBefore))
+    }">下一页</a>`
+    : "";
 
   return `<!doctype html>
 <html>
@@ -108,29 +160,65 @@ export function renderLogDetailPage(params: { log: LogEntry }): string {
       </div>
 
       <div class="card">
-        <div><span class="muted">时间：</span><span class="mono">${escapeHtml(time)}</span></div>
-        <div><span class="muted">方法：</span><span class="mono">${escapeHtml(log.method)}</span></div>
-        <div><span class="muted">路径：</span><span class="mono">${escapeHtml(log.path)}</span></div>
-        <div><span class="muted">状态：</span><span class="mono">${escapeHtml(String(log.status))}</span></div>
-        <div><span class="muted">耗时：</span><span class="mono">${escapeHtml(String(log.durationMs))}ms</span></div>
-        ${log.error ? `<div><span class="muted">错误：</span><span class="mono error">${escapeHtml(log.error)}</span></div>` : ""}
+        <div><span class="muted">时间：</span><span class="mono">${
+    escapeHtml(time)
+  }</span></div>
+        <div><span class="muted">方法：</span><span class="mono">${
+    escapeHtml(log.method)
+  }</span></div>
+        <div><span class="muted">路径：</span><span class="mono">${
+    escapeHtml(log.path)
+  }</span></div>
+        <div><span class="muted">状态：</span><span class="mono">${
+    escapeHtml(String(log.status))
+  }</span></div>
+        <div><span class="muted">耗时：</span><span class="mono">${
+    escapeHtml(String(log.durationMs))
+  }ms</span></div>
+        ${
+    log.error
+      ? `<div><span class="muted">错误：</span><span class="mono error">${
+        escapeHtml(log.error)
+      }</span></div>`
+      : ""
+  }
       </div>
 
       <h2>Request（脱敏后）</h2>
       <div class="card">
-        ${log.request.model ? `<div><span class="muted">model：</span><span class="mono">${escapeHtml(log.request.model)}</span></div>` : ""}
-        ${typeof log.request.isStream === "boolean"
-    ? `<div><span class="muted">stream：</span><span class="mono">${escapeHtml(String(log.request.isStream))}</span></div>`
-    : ""}
-        ${log.request.truncated ? `<div class="muted">（请求日志已截断）</div>` : ""}
+        ${
+    log.request.model
+      ? `<div><span class="muted">model：</span><span class="mono">${
+        escapeHtml(log.request.model)
+      }</span></div>`
+      : ""
+  }
+        ${
+    typeof log.request.isStream === "boolean"
+      ? `<div><span class="muted">stream：</span><span class="mono">${
+        escapeHtml(String(log.request.isStream))
+      }</span></div>`
+      : ""
+  }
+        ${
+    log.request.truncated ? `<div class="muted">（请求日志已截断）</div>` : ""
+  }
         ${renderJsonOrText(log.request.bodyJson, log.request.bodyText)}
       </div>
 
       <h2>Response（脱敏后，片段）</h2>
       <div class="card">
-        <div><span class="muted">stream：</span><span class="mono">${escapeHtml(String(log.response.stream))}</span></div>
-        ${log.response.aborted ? `<div class="muted">（客户端中途断开，响应片段为已捕获部分）</div>` : ""}
-        ${log.response.truncated ? `<div class="muted">（响应片段已截断）</div>` : ""}
+        <div><span class="muted">stream：</span><span class="mono">${
+    escapeHtml(String(log.response.stream))
+  }</span></div>
+        ${
+    log.response.aborted
+      ? `<div class="muted">（客户端中途断开，响应片段为已捕获部分）</div>`
+      : ""
+  }
+        ${
+    log.response.truncated ? `<div class="muted">（响应片段已截断）</div>` : ""
+  }
         <pre class="mono">${escapeHtml(log.response.snippetText ?? "")}</pre>
       </div>
     </main>
@@ -140,7 +228,9 @@ export function renderLogDetailPage(params: { log: LogEntry }): string {
 
 function renderJsonOrText(json: unknown, text: string | undefined): string {
   if (json !== undefined) {
-    return `<pre class="mono">${escapeHtml(JSON.stringify(json, null, 2))}</pre>`;
+    return `<pre class="mono">${
+      escapeHtml(JSON.stringify(json, null, 2))
+    }</pre>`;
   }
   return `<pre class="mono">${escapeHtml(text ?? "")}</pre>`;
 }
@@ -177,5 +267,3 @@ function escapeHtml(input: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-
-

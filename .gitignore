@@ -16,4 +16,7 @@ env.local
 .deno/
 coverage/
 
+# local tools (e.g., downloaded deno.exe)
+.tools/
+
 

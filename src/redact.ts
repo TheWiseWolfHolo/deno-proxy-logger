@@ -15,7 +15,9 @@ const TOKEN_VALUE_PATTERNS: Array<{ re: RegExp; replace: string }> = [
 
 export function redactString(input: string): string {
   let out = input;
-  for (const { re, replace } of TOKEN_VALUE_PATTERNS) out = out.replaceAll(re, replace);
+  for (const { re, replace } of TOKEN_VALUE_PATTERNS) {
+    out = out.replaceAll(re, replace);
+  }
   return out;
 }
 
@@ -32,9 +34,8 @@ export function redactJson(value: unknown): Redacted<unknown> {
 
   const walk = (v: unknown): unknown => {
     if (v === null) return v;
-    const t = typeof v;
-    if (t === "string") return redactString(v);
-    if (t !== "object") return v;
+    if (typeof v === "string") return redactString(v);
+    if (typeof v !== "object") return v;
 
     const obj = v as object;
     const cached = seen.get(obj);
@@ -64,7 +65,9 @@ export function clampUtf8Bytes(input: Uint8Array, maxBytes: number): {
   bytes: Uint8Array;
   truncated: boolean;
 } {
-  if (maxBytes <= 0) return { bytes: new Uint8Array(), truncated: input.byteLength > 0 };
+  if (maxBytes <= 0) {
+    return { bytes: new Uint8Array(), truncated: input.byteLength > 0 };
+  }
   if (input.byteLength <= maxBytes) return { bytes: input, truncated: false };
   return { bytes: input.slice(0, maxBytes), truncated: true };
 }
@@ -108,7 +111,9 @@ export async function readStreamLimited(
   return { bytes: out, truncated };
 }
 
-export function tryParseJson(bytes: Uint8Array): { ok: true; value: unknown } | { ok: false } {
+export function tryParseJson(
+  bytes: Uint8Array,
+): { ok: true; value: unknown } | { ok: false } {
   const text = new TextDecoder().decode(bytes).trim();
   if (!text) return { ok: true, value: null };
   try {
@@ -131,7 +136,9 @@ export function extractSummary(body: unknown): {
   // OpenAI: { messages: [{role, content}] }
   const messages = obj.messages;
   if (Array.isArray(messages) && messages.length > 0) {
-    const last = messages[messages.length - 1] as Record<string, unknown> | undefined;
+    const last = messages[messages.length - 1] as
+      | Record<string, unknown>
+      | undefined;
     const content = last ? last.content : undefined;
     const text = contentToText(content);
     return { summary: text ? truncate(text, 220) : undefined, model, isStream };
@@ -140,7 +147,9 @@ export function extractSummary(body: unknown): {
   // Gemini: { contents: [{ parts: [{text}] }] }
   const contents = obj.contents;
   if (Array.isArray(contents) && contents.length > 0) {
-    const last = contents[contents.length - 1] as Record<string, unknown> | undefined;
+    const last = contents[contents.length - 1] as
+      | Record<string, unknown>
+      | undefined;
     const parts = last ? last.parts : undefined;
     const text = partsToText(parts);
     return { summary: text ? truncate(text, 220) : undefined, model, isStream };
@@ -189,5 +198,3 @@ function concatChunks(chunks: Uint8Array[], size: number): Uint8Array {
   }
   return out;
 }
-
-

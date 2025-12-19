@@ -50,17 +50,15 @@ export class LogStore {
     const limit = clampLimit(params.limit);
     const before = params.before;
 
-    const options: Deno.KvListOptions = {
-      prefix: ["log"],
-      limit,
-      reverse: true,
-    };
-    if (typeof before === "number" && Number.isFinite(before)) {
-      options.end = ["log", before];
-    }
+    const selector: Deno.KvListSelector =
+      typeof before === "number" && Number.isFinite(before)
+        ? { prefix: ["log"], end: ["log", before] }
+        : { prefix: ["log"] };
+
+    const options: Deno.KvListOptions = { limit, reverse: true };
 
     const out: LogEntry[] = [];
-    for await (const item of this.kv.list<LogEntry>(options)) {
+    for await (const item of this.kv.list<LogEntry>(selector, options)) {
       if (item.value) out.push(item.value);
     }
     return out;
@@ -71,5 +69,3 @@ function clampLimit(limit: number): number {
   if (!Number.isFinite(limit)) return 50;
   return Math.min(200, Math.max(1, Math.floor(limit)));
 }
-
-

@@ -1,4 +1,4 @@
-import { LogStore, type LogEntry } from "./log_store.ts";
+import { type LogEntry, LogStore } from "./log_store.ts";
 import {
   extractSummary,
   readStreamLimited,
@@ -7,12 +7,21 @@ import {
   redactUrlForLog,
   tryParseJson,
 } from "./redact.ts";
-import { renderLogDetailPage, renderLoginPage, renderLogsPage } from "./ui.ts";
+import {
+  renderKvNotConfiguredPage,
+  renderLogDetailPage,
+  renderLoginPage,
+  renderLogsPage,
+} from "./ui.ts";
 
 const DEFAULT_UPSTREAM_BASE_URL = "https://wolfholo-gcli.zeabur.app";
 const COOKIE_NAME = "proxy_token";
 
-export async function handleRequest(req: Request, kv: Deno.Kv): Promise<Response> {
+export async function handleRequest(
+  req: Request,
+  kv: Deno.Kv | null,
+  kvError?: string,
+): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.method === "OPTIONS") {
@@ -21,17 +30,33 @@ export async function handleRequest(req: Request, kv: Deno.Kv): Promise<Response
 
   // UI / API
   if (url.pathname === "/") return redirect("/logs");
-  if (url.pathname === "/health") return json({ ok: true });
+  if (url.pathname === "/health") {
+    return json({
+      ok: true,
+      kv: kv ? "ok" : "missing",
+      kvError: kv ? undefined : kvError,
+    });
+  }
   if (url.pathname === "/login") return handleLogin(req);
   if (url.pathname === "/logout") return handleLogout(req);
   if (url.pathname === "/logs" || url.pathname.startsWith("/logs/")) {
     const auth = checkAuth(req);
-    if (!auth.ok) return redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}`);
+    if (!auth.ok) {
+      return redirect(
+        `/login?next=${encodeURIComponent(url.pathname + url.search)}`,
+      );
+    }
+    if (!kv) return html(renderKvNotConfiguredPage({ kvError }), 503);
     return await handleLogsUi(req, kv);
   }
   if (url.pathname === "/api/logs" || url.pathname.startsWith("/api/logs/")) {
     const auth = checkAuth(req);
     if (!auth.ok) return withCors(json({ error: "unauthorized" }, 401));
+    if (!kv) {
+      return withCors(
+        json({ error: "kv_not_configured", message: "KV 未启用/未绑定" }, 503),
+      );
+    }
     return await handleLogsApi(req, kv);
   }
 
@@ -41,20 +66,30 @@ export async function handleRequest(req: Request, kv: Deno.Kv): Promise<Response
   return await handleProxy(req, kv);
 }
 
-async function handleProxy(req: Request, kv: Deno.Kv): Promise<Response> {
-  const upstreamBaseUrl = Deno.env.get("UPSTREAM_BASE_URL") ?? DEFAULT_UPSTREAM_BASE_URL;
+async function handleProxy(
+  req: Request,
+  kv: Deno.Kv | null,
+): Promise<Response> {
+  const upstreamBaseUrl = Deno.env.get("UPSTREAM_BASE_URL") ??
+    DEFAULT_UPSTREAM_BASE_URL;
   const upstreamKey = Deno.env.get("UPSTREAM_KEY") ?? "";
-  if (!upstreamKey) return withCors(json({ error: "missing UPSTREAM_KEY" }, 500));
+  if (!upstreamKey) {
+    return withCors(json({ error: "missing UPSTREAM_KEY" }, 500));
+  }
 
   const incomingUrl = new URL(req.url);
   const upstreamUrl = buildUpstreamUrl(upstreamBaseUrl, incomingUrl);
   maybeInjectGeminiKey(upstreamUrl, upstreamKey);
 
   const maxLogBytes = getIntEnv("MAX_LOG_BYTES", 32768);
-  const shouldLogResponse = (Deno.env.get("LOG_RESPONSE") ?? "1") !== "0";
+  const store = kv ? new LogStore(kv) : null;
+  const shouldLogResponse = !!store &&
+    (Deno.env.get("LOG_RESPONSE") ?? "1") !== "0";
 
   // 并行读取（clone 的 body）用于落库，不影响原始 body 转发
-  const requestBodyPromise = readRequestBodyForLog(req, maxLogBytes);
+  const requestBodyPromise = store
+    ? readRequestBodyForLog(req, maxLogBytes)
+    : Promise.resolve({ bytes: new Uint8Array(), truncated: false });
 
   const headers = new Headers(req.headers);
   headers.delete("authorization");
@@ -72,7 +107,6 @@ async function handleProxy(req: Request, kv: Deno.Kv): Promise<Response> {
   }
 
   const start = Date.now();
-  const store = new LogStore(kv);
   const id = crypto.randomUUID();
   const pathForLog = redactUrlForLog(incomingUrl);
 
@@ -81,50 +115,67 @@ async function handleProxy(req: Request, kv: Deno.Kv): Promise<Response> {
     upstreamResp = await fetch(upstreamUrl.toString(), init);
   } catch (err) {
     const durationMs = Date.now() - start;
-    const reqLog = await buildRequestLog(requestBodyPromise);
-    const entry: LogEntry = {
-      id,
-      ts: start,
-      method,
-      path: pathForLog,
-      upstreamBaseUrl,
-      status: 502,
-      durationMs,
-      request: reqLog,
-      response: { truncated: false, stream: false },
-      error: err instanceof Error ? err.message : String(err),
-    };
-    try {
-      await store.put(entry);
-    } catch {
-      // ignore
+    if (store) {
+      const reqLog = await buildRequestLog(requestBodyPromise);
+      const entry: LogEntry = {
+        id,
+        ts: start,
+        method,
+        path: pathForLog,
+        upstreamBaseUrl,
+        status: 502,
+        durationMs,
+        request: reqLog,
+        response: { truncated: false, stream: false },
+        error: err instanceof Error ? err.message : String(err),
+      };
+      try {
+        await store.put(entry);
+      } catch {
+        // ignore
+      }
     }
     return withCors(json({ error: "upstream_fetch_failed" }, 502));
   }
 
-  const resHeaders = mergeHeaders(new Headers(upstreamResp.headers), corsHeaders());
+  const resHeaders = mergeHeaders(
+    new Headers(upstreamResp.headers),
+    corsHeaders(),
+  );
 
   // 无 body（例如 HEAD）
   if (!upstreamResp.body) {
     const durationMs = Date.now() - start;
-    const reqLog = await buildRequestLog(requestBodyPromise);
-    const entry: LogEntry = {
-      id,
-      ts: start,
-      method,
-      path: pathForLog,
-      upstreamBaseUrl,
-      status: upstreamResp.status,
-      durationMs,
-      request: reqLog,
-      response: { truncated: false, stream: false },
-    };
-    try {
-      await store.put(entry);
-    } catch {
-      // ignore
+    if (store) {
+      const reqLog = await buildRequestLog(requestBodyPromise);
+      const entry: LogEntry = {
+        id,
+        ts: start,
+        method,
+        path: pathForLog,
+        upstreamBaseUrl,
+        status: upstreamResp.status,
+        durationMs,
+        request: reqLog,
+        response: { truncated: false, stream: false },
+      };
+      try {
+        await store.put(entry);
+      } catch {
+        // ignore
+      }
     }
-    return new Response(null, { status: upstreamResp.status, headers: resHeaders });
+    return new Response(null, {
+      status: upstreamResp.status,
+      headers: resHeaders,
+    });
+  }
+
+  if (!store) {
+    return new Response(upstreamResp.body, {
+      status: upstreamResp.status,
+      headers: resHeaders,
+    });
   }
 
   const body = createLoggedProxyStream(
@@ -133,7 +184,9 @@ async function handleProxy(req: Request, kv: Deno.Kv): Promise<Response> {
     async (meta) => {
       const durationMs = Date.now() - start;
       const reqLog = await buildRequestLog(requestBodyPromise);
-      const responseSnippet = shouldLogResponse ? redactString(meta.snippetText()) : undefined;
+      const responseSnippet = shouldLogResponse
+        ? redactString(meta.snippetText())
+        : undefined;
       const entry: LogEntry = {
         id,
         ts: start,
@@ -158,20 +211,27 @@ async function handleProxy(req: Request, kv: Deno.Kv): Promise<Response> {
     },
   );
 
-  return new Response(body, { status: upstreamResp.status, headers: resHeaders });
+  return new Response(body, {
+    status: upstreamResp.status,
+    headers: resHeaders,
+  });
 }
 
 async function handleLogsUi(req: Request, kv: Deno.Kv): Promise<Response> {
   const url = new URL(req.url);
   const store = new LogStore(kv);
 
-  if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method !== "GET") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
 
   if (url.pathname === "/logs") {
     const limit = getIntParam(url, "limit", 50);
     const before = getIntParam(url, "before", undefined);
     const logs = await store.list({ limit, before });
-    const nextBefore = logs.length === limit ? logs[logs.length - 1]?.ts : undefined;
+    const nextBefore = logs.length === limit
+      ? logs[logs.length - 1]?.ts
+      : undefined;
     return html(renderLogsPage({ logs, nextBefore }));
   }
 
@@ -184,7 +244,9 @@ async function handleLogsUi(req: Request, kv: Deno.Kv): Promise<Response> {
 async function handleLogsApi(req: Request, kv: Deno.Kv): Promise<Response> {
   const url = new URL(req.url);
   const store = new LogStore(kv);
-  if (req.method !== "GET") return withCors(json({ error: "method_not_allowed" }, 405));
+  if (req.method !== "GET") {
+    return withCors(json({ error: "method_not_allowed" }, 405));
+  }
 
   if (url.pathname === "/api/logs") {
     const limit = getIntParam(url, "limit", 50);
@@ -206,7 +268,10 @@ function handleLogin(req: Request): Response {
 
   const expected = Deno.env.get("PROXY_TOKEN") ?? "";
   if (!expected) {
-    return html(renderLoginPage({ next, message: "服务端未配置 PROXY_TOKEN" }), 500);
+    return html(
+      renderLoginPage({ next, message: "服务端未配置 PROXY_TOKEN" }),
+      500,
+    );
   }
 
   if (!token) {
@@ -277,7 +342,9 @@ async function buildRequestLog(
 function createLoggedProxyStream(
   upstreamBody: ReadableStream<Uint8Array>,
   maxCaptureBytes: number,
-  onDone: (meta: { truncated: boolean; aborted: boolean; snippetText: () => string }) => Promise<void>,
+  onDone: (
+    meta: { truncated: boolean; aborted: boolean; snippetText: () => string },
+  ) => Promise<void>,
 ): ReadableStream<Uint8Array> {
   const reader = upstreamBody.getReader();
   const decoder = new TextDecoder();
@@ -330,7 +397,9 @@ function createLoggedProxyStream(
             parts.push(decoder.decode(value, { stream: true }));
             captured += value.byteLength;
           } else {
-            parts.push(decoder.decode(value.slice(0, remaining), { stream: true }));
+            parts.push(
+              decoder.decode(value.slice(0, remaining), { stream: true }),
+            );
             captured += remaining;
             meta.truncated = true;
           }
@@ -377,7 +446,8 @@ function joinPath(basePath: string, extraPath: string): string {
 function maybeInjectGeminiKey(url: URL, key: string): void {
   // Gemini 原生 REST 常用 ?key=...；做一个“尽量兼容”的自动注入（不影响 OpenAI 路径）
   const p = url.pathname;
-  const looksLikeGemini = p.includes(":generateContent") || p.includes(":streamGenerateContent");
+  const looksLikeGemini = p.includes(":generateContent") ||
+    p.includes(":streamGenerateContent");
   if (!looksLikeGemini) return;
   if (!url.searchParams.has("key")) url.searchParams.set("key", key);
 }
@@ -390,7 +460,17 @@ function getIntEnv(name: string, fallback: number): number {
   return Math.max(0, Math.floor(n));
 }
 
-function getIntParam(url: URL, name: string, fallback: number | undefined): number | undefined {
+function getIntParam(url: URL, name: string, fallback: number): number;
+function getIntParam(
+  url: URL,
+  name: string,
+  fallback: number | undefined,
+): number | undefined;
+function getIntParam(
+  url: URL,
+  name: string,
+  fallback: number | undefined,
+): number | undefined {
   const raw = (url.searchParams.get(name) ?? "").trim();
   if (!raw) return fallback;
   const n = Number(raw);
@@ -460,7 +540,9 @@ function parseCookies(cookieHeader: string | null): Record<string, string> {
 function buildAuthCookie(token: string, req: Request): string {
   const url = new URL(req.url);
   const secure = url.protocol === "https:" ? " Secure;" : "";
-  return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000;${secure}`;
+  return `${COOKIE_NAME}=${
+    encodeURIComponent(token)
+  }; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000;${secure}`;
 }
 
 function clearAuthCookie(req: Request): string {
@@ -480,5 +562,3 @@ function safeEqual(a: string, b: string): boolean {
   }
   return out === 0 && a.length === b.length;
 }
-
-

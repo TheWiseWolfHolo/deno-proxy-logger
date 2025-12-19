@@ -1,6 +1,8 @@
 # deno-proxy-logger
 
-一层**透明反向代理**：把 OpenAI 兼容 / Gemini 请求转发到上游，同时**不破坏流式输出**，并把“对话相关 body（脱敏后）”持久化保存到 **Deno KV**，提供简易日志查看页面。
+一层**透明反向代理**：把 OpenAI 兼容 / Gemini
+请求转发到上游，同时**不破坏流式输出**，并把“对话相关
+body（脱敏后）”持久化保存到 **Deno KV**，提供简易日志查看页面。
 
 ## 功能
 
@@ -26,7 +28,7 @@
 
 ## 本地运行
 
-1) 设置环境变量（PowerShell 示例）：
+1. 设置环境变量（PowerShell 示例）：
 
 ```powershell
 $env:UPSTREAM_BASE_URL="https://wolfholo-gcli.zeabur.app"
@@ -36,7 +38,7 @@ $env:LOG_RESPONSE="1"
 $env:MAX_LOG_BYTES="32768"
 ```
 
-2) 启动：
+2. 启动：
 
 ```powershell
 cd E:\Download\Monitor\deno-proxy-logger
@@ -47,16 +49,16 @@ deno task dev
 
 通过 Deno Deploy 控制台（`dash.deno.com`）从 GitHub 导入并部署。
 
-1) 打开 Deno Deploy 控制台并登录：`https://dash.deno.com`
+1. 打开 Deno Deploy 控制台并登录：`https://dash.deno.com`
 
-2) 创建项目
+2. 创建项目
 
 - 选择 “New Project / Import from GitHub”
 - 选择仓库：`TheWiseWolfHolo/deno-proxy-logger`
 - 分支：`main`
 - 入口文件（Main module / Entrypoint）：`main.ts`
 
-3) 配置环境变量（Project Settings → Environment Variables）
+3. 配置环境变量（Project Settings → Environment Variables）
 
 - `UPSTREAM_BASE_URL`（可选，不配则默认 `https://wolfholo-gcli.zeabur.app`）
 - `UPSTREAM_KEY`（必填：上游 key，只放服务端）
@@ -64,14 +66,15 @@ deno task dev
 - `LOG_RESPONSE`（可选：`1` 记录响应片段，`0` 只记录请求）
 - `MAX_LOG_BYTES`（可选：默认 `32768`）
 
-4) 创建并绑定 Deno KV（Project → Databases / KV）
+4. 创建并绑定 Deno KV（Project → Databases / KV）
 
 - 创建一个 KV Database，并绑定到这个项目
-- 本项目代码使用 `const kv = await Deno.openKv();`，在 Deploy 上会自动连接到已绑定的 KV
+- 本项目代码使用 `const kv = await Deno.openKv();`，在 Deploy
+  上会自动连接到已绑定的 KV
 
-5) 点击 Deploy 发布
+5. 点击 Deploy 发布
 
-6) 验证
+6. 验证
 
 - `GET /health` 返回 `{"ok":true}`
 - 浏览器访问 `GET /login?t=<PROXY_TOKEN>` 后再打开 `GET /logs` 查看日志
@@ -80,7 +83,7 @@ deno task dev
 
 ## 使用
 
-- 代理请求：客户端带 `Authorization: Bearer <PROXY_TOKEN>`，其余按 OpenAI/Gemini 兼容格式照常请求本服务的路径即可。
-- 查看日志：先访问 `GET /login?t=<PROXY_TOKEN>` 写入 cookie，然后打开 `GET /logs`。
-
-
+- 代理请求：客户端带 `Authorization: Bearer <PROXY_TOKEN>`，其余按 OpenAI/Gemini
+  兼容格式照常请求本服务的路径即可。
+- 查看日志：先访问 `GET /login?t=<PROXY_TOKEN>` 写入 cookie，然后打开
+  `GET /logs`。
