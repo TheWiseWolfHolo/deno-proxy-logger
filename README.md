@@ -45,7 +45,38 @@ deno task dev
 
 ## 部署到 Deno Deploy
 
-在 Deno Deploy 创建项目，入口选择 `main.ts`，然后在项目设置里配置上述环境变量即可。
+通过 Deno Deploy 控制台（`dash.deno.com`）从 GitHub 导入并部署。
+
+1) 打开 Deno Deploy 控制台并登录：`https://dash.deno.com`
+
+2) 创建项目
+
+- 选择 “New Project / Import from GitHub”
+- 选择仓库：`TheWiseWolfHolo/deno-proxy-logger`
+- 分支：`main`
+- 入口文件（Main module / Entrypoint）：`main.ts`
+
+3) 配置环境变量（Project Settings → Environment Variables）
+
+- `UPSTREAM_BASE_URL`（可选，不配则默认 `https://wolfholo-gcli.zeabur.app`）
+- `UPSTREAM_KEY`（必填：上游 key，只放服务端）
+- `PROXY_TOKEN`（必填：访问你这层代理/日志的 token）
+- `LOG_RESPONSE`（可选：`1` 记录响应片段，`0` 只记录请求）
+- `MAX_LOG_BYTES`（可选：默认 `32768`）
+
+4) 创建并绑定 Deno KV（Project → Databases / KV）
+
+- 创建一个 KV Database，并绑定到这个项目
+- 本项目代码使用 `const kv = await Deno.openKv();`，在 Deploy 上会自动连接到已绑定的 KV
+
+5) 点击 Deploy 发布
+
+6) 验证
+
+- `GET /health` 返回 `{"ok":true}`
+- 浏览器访问 `GET /login?t=<PROXY_TOKEN>` 后再打开 `GET /logs` 查看日志
+
+后续你只要 push 到 GitHub，Deno Deploy 会自动重新部署。
 
 ## 使用
 
